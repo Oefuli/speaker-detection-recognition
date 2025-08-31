@@ -1,0 +1,40 @@
+[project]
+name = "person-detection-recognition"
+version = "0.1.0"
+description = "This code can be used to separate speakers in an audio file (using pyannote) and then search for a person in the audio snippets (using pyannote)."
+requires-python = ">=3.11"
+dependencies = [
+    # Jupyter & IPython
+    "ipykernel",
+    "ipython",
+    "ipywidgets==8.1.5",
+    "jupyter_client",
+    "jupyter_core",
+    "jupyterlab_widgets==3.0.13",
+
+    # PyAnnote-Suite
+    "pyannote.audio==3.3.2",
+    "pyannote.core==5.0.0",
+    "pyannote.database==5.1.3",
+    "pyannote.metrics==3.2.1",
+    "pyannote.pipeline==3.0.1",
+    
+    # PyTorch & Machine Learning
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
+    "pytorch-lightning==2.5.1",
+    "pytorch-metric-learning==2.8.1",
+    "torch-audiomentations==0.12.0",
+    "torch_pitch_shift==1.2.5",
+    "torchmetrics==1.7.0",
+
+    # Audio & Data
+    "librosa==0.11.0",
+    "numpy>=2.0",
+    "pandas==2.2.3",
+    "scipy==1.15.2",
+    "soundfile==0.13.1",
+    "tqdm==4.67.1",    
+]
+
+
