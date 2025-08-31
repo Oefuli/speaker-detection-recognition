@@ -79,6 +79,7 @@ Thumbs.db  # Windows
 
 # directories
 test_files/
+.jupyter/
 
 # files
 example_for_me.ipynb
