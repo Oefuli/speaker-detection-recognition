@@ -1,6 +1,8 @@
 
 
-def remap_dict_keys(obj_in: dict | list = None) -> dict | list:
+def remap_dict_keys(
+        obj_in: dict | list[dict]
+        ) -> dict | list[dict]:
     """
     (1) Maps a dictionary to a list of dictionaries.
     Application e.g. if the keys of the dictionaries are made of tuples.

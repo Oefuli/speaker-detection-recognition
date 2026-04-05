@@ -63,7 +63,7 @@ def read_json(
 # ----------------------------------------------------------------- #
 
 def get_f_ps_ns(
-        dir_path: str,
+        dir_path: Path | str,
         file_ext: str = '*',
         dir_switch: bool = False,
         subfolder_switch: bool = False,

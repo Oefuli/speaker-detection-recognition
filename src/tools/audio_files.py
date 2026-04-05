@@ -3,7 +3,8 @@ from pathlib import Path, PurePath
 from subprocess import CalledProcessError, run
 import time
 from datetime import datetime
-import inspect
+
+from typing import cast, Any
 
 import librosa
 import pandas as pd
@@ -22,7 +23,16 @@ from pyannote.core import Annotation
 
 from scipy.spatial.distance import cdist
 
-from src.tools.paths_files import get_only_dir, get_f_ps_ns
+from .paths_files import get_only_dir, get_f_ps_ns
+
+import logging
+
+# ------------------------------------------------- #
+
+logger = logging.getLogger(__name__)
+                           
+# ------------------------------------------------- #
+
 
 # ------------------------------------------------------------- #
 
@@ -34,11 +44,13 @@ PATH_PYANNOTE_EMBEDDING = SRC_PATH / 'pyannote_clf' / 'embedding_model' / 'pytor
 
 # ------------------------------------------------------------- #
 
-def cut_out_audio(input_file_path: Path | str = None,
-                  output_file_path: Path | str = None,
-                  start: float = None,
-                  end: float = None,
-                  samplerate: int = 44100): 
+def cut_out_audio(
+        input_file_path: Path | str,
+        output_file_path: Path | str,
+        start: float,
+        end: float,
+        samplerate: int = 44100
+        ): 
     """
     Cuts out a relevant part (start, end) from the
     audio file and saves it in output_file_path
@@ -104,11 +116,14 @@ def cut_out_audio(input_file_path: Path | str = None,
 # -------------------------------------------------- #
 
 
-def split_audio(input_dir: Path | str = None,
-                input_file_name: str = None,
-                output_dir: Path | str = None,
-                make_output_dir: bool = False,
-                diarization: Annotation = None):
+def split_audio(
+        input_dir: Path | str,
+        input_file_name: str,
+        output_dir: Path | str,
+        diarization: Annotation | dict,
+        make_output_dir: bool = False,
+        
+        ):
     """
     Splits the audio file based on the recognized speakers and
     saves individual sequences that are assigned to the speakers.
@@ -150,14 +165,14 @@ def split_audio(input_dir: Path | str = None,
                                    input_file_name)
 
     if isinstance(diarization, dict):
-
-        diarization = diarization[input_file_name_no_ext]
+        diar_obj = diarization[input_file_name_no_ext]
+    else:
+        diar_obj = diarization
 
     count = 10001
 
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        # print(f"start={turn.start}s stop={turn.end}s speaker_{speaker}")
-
+    for turn, _, speaker in cast(Any, diar_obj.itertracks(yield_label=True)):
+        
         speaker_dir = f"{output_dir}/{speaker}/"
 
         if not Path(speaker_dir).is_dir():
@@ -180,9 +195,11 @@ def split_audio(input_dir: Path | str = None,
 # -------------------------------------------------- #
 
 
-def dump_diariza(output_dir: Path | str = None,
-                 output_file_name: str = None,
-                 diarization: Annotation = None):
+def dump_diariza(
+        output_dir: Path | str,
+        output_file_name: Path | str,
+        diarization: Annotation
+                 ):
     """
     Dumps the diarization in the output_dir directory
     and names it output_file_name.
@@ -195,13 +212,15 @@ def dump_diariza(output_dir: Path | str = None,
 
 # -------------------------------------------------- #
 
-def diariza(input_dir: Path | str = None,
-            input_file_name: str = None,
-            pipeline: Pipeline = None,
-            cuda_switch: bool = False,
-            dump_switch: bool = False,
-            dump_output_dir: Path | str = None,
-            dump_output_file_name: Path | str = None):
+def diariza(
+        input_dir: Path | str,
+        input_file_name: str,
+        pipeline: Pipeline,
+        cuda_switch: bool = False,
+        dump_switch: bool = False,
+        dump_output_dir: Path | str | None = None,
+        dump_output_file_name: Path | str | None = None
+        ):
     """
     Uses pyannotes pipeline =
     Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", ...)
@@ -246,21 +265,27 @@ def diariza(input_dir: Path | str = None,
 
     if dump_switch:
 
-        if dump_output_file_name is None:
+        if dump_output_dir is None:
+            dump_output_dir = input_dir
 
+        if dump_output_file_name is None:
             dump_output_file_name = \
              PurePath(input_file_name).stem + '.rttm'
 
-        dump_diariza(dump_output_dir,
-                     dump_output_file_name,
-                     diarization)
+        dump_diariza(
+            dump_output_dir,
+            dump_output_file_name,
+            diarization
+            )
 
     return diarization
 
 # -------------------------------------------------- #
 
-def cdist_to_df(dist_dict: dict = None,
-                cdist_metric: Path | str = None):
+def cdist_to_df(
+        dist_dict: dict,
+        cdist_metric: str
+        ):
 
     df_lst = []
 
@@ -312,11 +337,13 @@ def norm_array(vec):
 
 # ---------------------------------------------------------------------- #
 
-def compare_audios_dist(speaker1_path: Path | str = None,
-                        speaker2_path: Path | str = None,
-                        metric: str = None,                        
-                        cuda_switch: bool = False,
-                        norm: bool = False):
+def compare_audios_dist(
+        speaker1_path: Path | str,
+        speaker2_path: Path | str,
+        metric: str,                        
+        cuda_switch: bool = False,
+        norm: bool = False
+        ):
     """
     INPUT
         speaker1_path (Path | str): Path to the audo file
@@ -330,34 +357,39 @@ def compare_audios_dist(speaker1_path: Path | str = None,
     inference = Inference(model, window="whole")
 
     if cuda_switch:
-
         inference.to(torch.device("cuda"))
+
+    emb1_raw = np.asarray(inference(speaker1_path))
+    emb2_raw = np.asarray(inference(speaker2_path))
 
     if norm:
 
-        embedding1 = norm_array(inference(speaker1_path).reshape(1, -1))
-        embedding2 = norm_array(inference(speaker2_path).reshape(1, -1))
+        embedding1 = norm_array(emb1_raw.reshape(1, -1))
+        embedding2 = norm_array(emb2_raw.reshape(1, -1))
 
     else:
         # `embeddingX` is (1 x D) numpy array extracted
         # from the file as a whole.
-        embedding1 = inference(speaker1_path).reshape(1, -1)
-        embedding2 = inference(speaker2_path).reshape(1, -1)    
+        embedding1 = emb1_raw.reshape(1, -1)
+        embedding2 = emb2_raw.reshape(1, -1)    
 
-    return cdist(embedding1,
-                 embedding2,
-                 metric=metric)
+    return cdist(
+        embedding1,
+        embedding2,
+        metric=metric # type: ignore
+        ) 
 
 # -------------------------------------------------------------------------- #
 
-def get_speaker_dist(reference_dir_path: Path | str=None,
-                     reference_file_name: str=None,
-                     split_dir_path: Path | str=None,                      
-                     metric: str=None,
-                     ext: str='wav',
-                     duration_val: float=float(5),
-                     cuda_switch: bool=False,
-                     verbose: int=-1):
+def get_speaker_dist(
+        reference_dir_path: Path | str,
+        reference_file_name: str,
+        split_dir_path: Path | str,                      
+        metric: str,
+        ext: str='wav',
+        duration_val: float=float(5),
+        cuda_switch: bool=False
+        ):
     """
     Returns the distances between the given
     audio files in split_dir_path and the reference in
@@ -390,14 +422,11 @@ def get_speaker_dist(reference_dir_path: Path | str=None,
     path_reference = os.path.join(reference_dir_path,
                                   reference_file_name)
 
-    if verbose > -1:
-        print(f'\nFunction: {inspect.currentframe().f_code.co_name}\n')
     
-        print(f"\n\tUse CUDA: {cuda_switch}")
-    
-        print(f"\tReference path: {path_reference}\n")
-    
-        print(f'\tDuration value: {duration_val} s.')
+    logger.info("Start computing distances.") 
+    logger.info(f"Use CUDA: {cuda_switch}.")    
+    logger.info(f"Reference path: {path_reference}.")    
+    logger.info(f'Duration value: {duration_val} s.')
 
     # all directories in the split directory
     subdirs_split_dir_path = get_f_ps_ns(split_dir_path, dir_switch=True)
@@ -406,11 +435,7 @@ def get_speaker_dist(reference_dir_path: Path | str=None,
 
     for subdir_name in pbar:
 
-        # print('dir_name: ', dir_name)
-
         subdir_path = os.path.join(split_dir_path, subdir_name)
-
-        # print('dir_path: ', dir_path)
 
         file_paths_names = get_f_ps_ns(
                            subdir_path, file_ext=ext)
@@ -418,15 +443,9 @@ def get_speaker_dist(reference_dir_path: Path | str=None,
         file_paths = list(file_paths_names.values())
         file_names = list(file_paths_names.keys())
 
-        # print('file_paths_names: ', file_paths_names)
-
         for file_path, file_name in zip(file_paths, file_names):
 
-            # print('file_path: ', file_path)
-
             duration = librosa.get_duration(filename=file_path)
-
-            # print('Duration: ', duration)
 
             if duration >= duration_val:
 
@@ -436,7 +455,7 @@ def get_speaker_dist(reference_dir_path: Path | str=None,
                                            cuda_switch=cuda_switch)
                 if dist.shape != (1,1):
 
-                    print(f'\n!!!!! Warning: Shape of distance is {dist.shape}!!!!!\n')
+                    logger.warning(f'Shape of distance is {dist.shape}!')
 
                 dist_dict[(PurePath(split_dir_path).name,
                            subdir_name,
@@ -449,7 +468,9 @@ def get_speaker_dist(reference_dir_path: Path | str=None,
 # ------------------------Audio Infos------------------------------------ #
 # ----------------------------------------------------------------------- #
 
-def get_audio_durations(output_dir: Path | str = None):
+def get_audio_durations(
+        output_dir: Path | str
+        ):
     """
     Returns a dictionary containing the durations
     of the audio files in seconds.
@@ -481,7 +502,9 @@ def get_audio_durations(output_dir: Path | str = None):
 
 # -------------------------------------------------- #
 
-def get_audio_infos(path_in: Path | str = None):
+def get_audio_infos(
+        path_in: Path | str
+        ):
     """
     Get informations of an audio file.
     
@@ -513,9 +536,11 @@ def get_audio_infos(path_in: Path | str = None):
 
 # ---------------------------------------------------------------------- #    
 
-def coll_infos(path_in: Path | str = None,
-               ext: str = 'wav',               
-               n_jobs: int = 1):
+def coll_infos(
+        path_in: Path | str,
+        ext: str = 'wav',               
+        n_jobs: int = 1
+        ):
     """
     Collects informations of the audio files. Works with
     jolib and parallel computing.
@@ -532,43 +557,33 @@ def coll_infos(path_in: Path | str = None,
         No extraordinary raises.
     """
 
-    start_time = time.perf_counter()
-
-    print(f'Program started at: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}')
-
-    #audios_infos_dict = {}
+    logger.info("Gathering information about the audio files has started.")
 
     file_paths_names = get_f_ps_ns(path_in,
                                    file_ext=ext)
 
-    print(f'\n\tCollect infos from {len(file_paths_names)} files.')
+    logger.info(f'Collect infos from {len(file_paths_names)} files.')
 
     result = Parallel(n_jobs=n_jobs)(delayed(get_audio_infos)(file_path)\
                                      for file_path in list(file_paths_names.values()))
 
-    finish_time = time.perf_counter()
-
-    print(f'\nProgram finished in {finish_time - start_time} seconds.')
-    print(f'Program finished at: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}')
+    logger.info("Gathering information about the audio files has finished.")
 
     return result
 # --------------------------------------------------------------------- #
 
-def audio_infos_to_df(infos_dict: dict = None):
+def audio_infos_to_df(
+        infos_dict: dict
+        ):
     """
     Converts a dictionary into a data frame.
     """
 
-    start_time = time.perf_counter()
-
-    print(f'Program started at: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}')
+    logger.info("Conversion of the dictionary to a DataFrame started.")
     
     df = pd.Series({key: value for list_item in infos_dict for key, value in list_item.items()}).unstack()
 
-    finish_time = time.perf_counter()
-    
-    print(f'Program finished at: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}')
-    print(f'\nProgram finished in {finish_time - start_time} seconds.')
+    logger.info("Conversion of the dictionary to a DataFrame completed.")
     
 
     return df
