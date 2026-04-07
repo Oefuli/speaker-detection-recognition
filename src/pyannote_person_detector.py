@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from pyannote.audio import Pipeline
@@ -116,15 +115,14 @@ class diarize_voice_rec():
 
         if rttm_dir_path is None:
 
-            rttm_dir_path = dump_rttm_dir
+            rttm_dir_path = self.dump_rttm_dir
 
         if rttm_file_name is None:
 
-            rttm_file_name = Path(input_file_name_to_diar).stem + '.rttm'
+            rttm_file_name = Path(self.input_file_name_to_diar).stem + '.rttm'
 
-        
-
-        self.diarization = load_rttm(os.path.join(rttm_dir_path, rttm_file_name))        
+        file_path = Path(rttm_dir_path) / rttm_file_name
+        self.diarization = load_rttm(str(file_path))
 
     # ------------------------------------------------------------------- #
 
@@ -191,18 +189,15 @@ class diarize_voice_rec():
 
             split_subdir = Path(self.input_file_name_to_diar).stem
 
+        split_dir_path = Path(self.split_dir) / split_subdir
+
         self.dist_dict = get_speaker_dist(reference_dir_path=ref_dir_path,
                                           reference_file_name=ref_file_name,
-                                          split_dir_path=os.path.join(
-                                          self.split_dir,
-                                          split_subdir),                                            
+                                          split_dir_path=str(split_dir_path),                                            
                                            metric=metric,
                                            ext=ext,
                                            duration_val=duration_val,
                                            cuda_switch=cuda_switch)
-
-        #self.df_cdist = cdist_to_df(dist_dict=self.cdist_dict,
-        #                            cdist_metric=metric)
 
     # ------------------------------------------------------------------- #
 

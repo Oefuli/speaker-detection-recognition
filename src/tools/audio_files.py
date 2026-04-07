@@ -1,4 +1,3 @@
-import os
 from pathlib import Path, PurePath
 from subprocess import CalledProcessError, run
 import time
@@ -7,10 +6,11 @@ from datetime import datetime
 from typing import cast, Any
 
 import librosa
-import pandas as pd
+import polars as pl
 import numpy as np
 
 from tqdm import tqdm
+import logging
 
 from joblib import Parallel, delayed
 
@@ -24,11 +24,11 @@ from pyannote.core import Annotation
 from scipy.spatial.distance import cdist
 
 from .paths_files import get_only_dir, get_f_ps_ns
-
-import logging
+from logger_config import setup_logger
 
 # ------------------------------------------------- #
 
+setup_logger()
 logger = logging.getLogger(__name__)
                            
 # ------------------------------------------------- #
@@ -153,16 +153,13 @@ def split_audio(
 
     input_file_name_no_ext = Path(input_file_name).stem
 
-    output_dir = os.path.join(output_dir,
-                              input_file_name_no_ext)
+    output_dir_path = Path(output_dir) / input_file_name_no_ext
 
-    if not os.path.exists(output_dir) and make_output_dir:
+    if not output_dir_path.exists() and make_output_dir:
+        logging.info(f'Make directory {output_dir_path}.')
+        output_dir_path.mkdir(parents=True, exist_ok=True)
 
-        print(f'\nMake directory {output_dir}.')
-        os.mkdir(output_dir)
-
-    input_file_path = os.path.join(input_dir,
-                                   input_file_name)
+    input_file_path = Path(input_dir) / input_file_name
 
     if isinstance(diarization, dict):
         diar_obj = diarization[input_file_name_no_ext]
@@ -173,16 +170,21 @@ def split_audio(
 
     for turn, _, speaker in cast(Any, diar_obj.itertracks(yield_label=True)):
         
-        speaker_dir = f"{output_dir}/{speaker}/"
+        speaker_dir = output_dir_path / speaker
 
-        if not Path(speaker_dir).is_dir():
-            Path(speaker_dir).mkdir(parents=True)
+        if not speaker_dir.is_dir():
+            speaker_dir.mkdir(parents=True, exist_ok=True)
 
         file_name = f"interview-{count}.wav"
 
-        output_file_path = os.path.join(speaker_dir, file_name)
+        output_file_path = speaker_dir / file_name
         
-        cut_out_audio(input_file_path, output_file_path, turn.start, turn.end)        
+        cut_out_audio(
+            input_file_path=str(input_file_path),
+            output_file_path=str(output_file_path),
+            start=turn.start,
+            end=turn.end
+            )
 
         split_dict[(input_file_name, speaker, file_name)] =\
             {'start_seconds': round(turn.start, 3),
@@ -243,7 +245,7 @@ def diariza(
         Pyannotes diarization object.
     """
 
-    input_file_path = r'%s' % os.path.join(input_dir, input_file_name)
+    input_file_path = str(Path(input_dir) / input_file_name)
 
     if cuda_switch:
 
@@ -289,32 +291,36 @@ def cdist_to_df(
 
     df_lst = []
 
-    for key in dist_dict.keys():
-
-        slices_pred = pd.Series(dist_dict[key],
-                                name='scipy.cdist')
-
+    for key, val in dist_dict.items():
+        
         col_lst = key.split('/')
+        event_name = col_lst[1]
+        speaker_name = col_lst[2]
 
-        event_lst = [col_lst[1]]*slices_pred.shape[0]
-        speaker_lst = [col_lst[2]]*slices_pred.shape[0]
+        # Ermitteln von Slices und Werten, unabhängig davon ob val ein Dict oder Array/Liste ist
+        if isinstance(val, dict):
+            slices = list(val.keys())
+            values = list(val.values())
+        else:
+            slices = list(range(len(val)))
+            values = list(val)
 
-        df = pd.DataFrame([event_lst,
-                           speaker_lst,
-                           slices_pred.index,
-                           slices_pred],
-                           index=['event',
-                                 'speaker',
-                                 'slice',
-                                 'scipy.cdist.' + cdist_metric]).transpose()
+        # Polars DataFrame direkt über ein Dictionary-Mapping erstellen
+        df = pl.DataFrame({
+            'event': [event_name] * len(values),
+            'speaker': [speaker_name] * len(values),
+            'slice': slices,
+            f'scipy.cdist.{cdist_metric}': values
+        })
 
         df_lst.append(df)
 
-    # df.set_index('path', inplace=True, append=False)
+    # Leere Liste abfangen, falls das Dict leer war
+    if not df_lst:
+        return pl.DataFrame()
 
-    df_return = pd.concat(df_lst)
-
-    df_return.reset_index(inplace=True, drop=True)
+    # DataFrames zusammenfügen (äquivalent zu pd.concat, aber reset_index entfällt)
+    df_return = pl.concat(df_lst)
 
     return df_return
 
@@ -419,8 +425,7 @@ def get_speaker_dist(
 
     dist_dict = {}
 
-    path_reference = os.path.join(reference_dir_path,
-                                  reference_file_name)
+    path_reference = str(Path(reference_dir_path) / reference_file_name)
 
     
     logger.info("Start computing distances.") 
@@ -435,7 +440,7 @@ def get_speaker_dist(
 
     for subdir_name in pbar:
 
-        subdir_path = os.path.join(split_dir_path, subdir_name)
+        subdir_path = Path(split_dir_path) / subdir_name
 
         file_paths_names = get_f_ps_ns(
                            subdir_path, file_ext=ext)
@@ -482,12 +487,11 @@ def get_audio_durations(
 
     for dir_name in get_only_dir(output_dir):
 
-        dir_path = os.path.join(output_dir, dir_name)
+        dir_path = str(Path(output_dir) / dir_name)
 
         audio_dir_dict[dir_path] = {}
 
-        file_paths_names = get_f_ps_ns(
-            os.path.join(output_dir, dir_name), file_ext='wav')
+        file_paths_names = get_f_ps_ns(Path(output_dir) / dir_name, file_ext='wav')
 
         file_paths = list(file_paths_names.values())
         file_names = list(file_paths_names.keys())
@@ -510,10 +514,11 @@ def get_audio_infos(
     
     https://audeering.github.io/audiofile/usage.html
     """
-    file_name = os.path.basename(path_in)
+    path_obj = Path(path_in)
+    file_name = path_obj.name
 
     # soundfile object
-    audio_infos = sf.info(path_in)
+    audio_infos = sf.info(str(path_in))
 
     
     skip_lst = ['verbose', 'extra_info', 'name']
@@ -530,7 +535,7 @@ def get_audio_infos(
         audio_infos_dict[(file_name, attr)] =\
         eval(f"audio_infos.{attr}")
         
-    audio_infos_dict[(file_name, 'size_bytes')] = os.path.getsize(path_in)
+    audio_infos_dict[(file_name, 'size_bytes')] = path_obj.stat().st_size
 
     return audio_infos_dict
 
@@ -573,17 +578,27 @@ def coll_infos(
 # --------------------------------------------------------------------- #
 
 def audio_infos_to_df(
-        infos_dict: dict
+        infos_dict: list # Korrigiert auf 'list', da joblib Parallel eine Liste von Dicts zurückgibt
         ):
     """
-    Converts a dictionary into a data frame.
+    Converts a list of dictionaries into a polars data frame.
     """
 
     logger.info("Conversion of the dictionary to a DataFrame started.")
     
-    df = pd.Series({key: value for list_item in infos_dict for key, value in list_item.items()}).unstack()
+    # Daten für Polars flachklopfen: { 'Dateiname1': {'attr1': val1, ...}, ... }
+    data_rows = {}
+    
+    for list_item in infos_dict:
+        for (file_name, attr), value in list_item.items():
+            if file_name not in data_rows:
+                # Wir legen den Dateinamen direkt als Spalte an
+                data_rows[file_name] = {'file_name': file_name}
+            data_rows[file_name][attr] = value
+
+    # Liste der umgewandelten Dictionaries direkt in Polars laden
+    df = pl.DataFrame(list(data_rows.values()))
 
     logger.info("Conversion of the dictionary to a DataFrame completed.")
     
-
     return df

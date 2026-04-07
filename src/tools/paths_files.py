@@ -1,13 +1,14 @@
-import os
-import glob
 from pathlib import Path, PurePath
 import shutil
 from tqdm import tqdm
 import json
 import logging
 
+from logger_config import setup_logger
+
 # ------------------------------------------------- #
 
+setup_logger()
 logger = logging.getLogger(__name__)
                            
 # ------------------------------------------------- #
@@ -91,17 +92,14 @@ def get_f_ps_ns(
     """
 
     tqdm_switch = not tqdm_switch
+    base_dir = Path(dir_path)
 
     # guarantees e.g. file_ext == '*.wav'
     if file_ext[0] != '*':
-
         file_ext = '*' + file_ext
-
-        if file_ext[1] != '.':
-    
+        if file_ext[1] != '.':    
             file_ext_splitted = file_ext.split('*')
             file_ext = '*' + '.' + ''.join(file_ext_splitted[1:])
-
     elif file_ext is None:
         raise ValueError("No file extension has been chosen.")
 
@@ -111,66 +109,49 @@ def get_f_ps_ns(
     files_in_dir_dict = {}
 
     if subfolder_switch:
-
-        glob_path = [file_path for file_path in\
-                     tqdm(glob.glob(os.path.join(dir_path, '**/' + file_ext), recursive=True),
-                          disable=tqdm_switch,
-                          desc=f'Get all {file_ext} files in all subdirectories')]
-
+        path_iterator = base_dir.rglob(file_ext)
+        desc_text = f'Get all {file_ext} files in all subdirectories'
+        
     else:
+        path_iterator = base_dir.glob(file_ext)
+        desc_text = 'Arrange dictionary'
 
-        glob_path = glob.glob(os.path.join(dir_path, file_ext))
 
+    for file_path in tqdm(list(path_iterator), disable=tqdm_switch, desc=desc_text):
 
-    for file in tqdm(glob_path,
-                     disable=tqdm_switch,
-                     desc='Arrange dictionary'):
-
-        # The switch is for control purposes only.
         if dir_switch:
-
-            if os.path.isdir(file):
-
-                files_in_dir_dict[os.path.basename(file)] = file
-
+            if file_path.is_dir():
+                files_in_dir_dict[file_path.name] = str(file_path)
             else:
-
-                logger.warning(f'{file} is not a directory.')
-
+                logger.warning(f'{file_path} is not a directory.')
         else: 
-            if os.path.isfile(file):
-
+            if file_path.is_file():
                 if subfolder_switch:
-
-                    files_in_dir_dict[(str(PurePath(file).parent), str(PurePath(file).name))] = file
-
-
+                    files_in_dir_dict[(str(file_path.parent), file_path.name)] = str(file_path)
                 else:
-                    files_in_dir_dict[os.path.basename(file)] = file
-
+                    files_in_dir_dict[file_path.name] = str(file_path)
             else:
-                logger.warning(f'{file} is not a file.')
+                logger.warning(f'{file_path} is not a file.')
 
     if verbose > -1:
-
         logger.info(f'Found {len(files_in_dir_dict)} files.')
 
     return files_in_dir_dict
 
 # ---------------------------------------------------------------------- #
 
-def get_only_dir(path):
+def get_only_dir(path: Path | str):
 
-    logger.info(f'Get directory paths from: {path}')
+    logger.info(f'Get directory paths from: {str(path)}')
 
-    return next(os.walk(path))[1]
+    return [p.name for p in Path(path).iterdir() if p.is_dir()]
 
 
 # -------------------------------------------------------- # 
 
 def copy_audio_slice(
-        input_dir:str,
-        output_dir: str,
+        input_dir: Path | str,
+        output_dir: Path | str,
         dir_file_tuple: tuple,
         speaker_name: str,
         dir_distinction: str | None = None
@@ -205,27 +186,15 @@ def copy_audio_slice(
         No return.
     """
     
-    src_path = os.path.join(
-        input_dir,
-        dir_file_tuple[0],
-        dir_file_tuple[1],
-        dir_file_tuple[2]
-        )
+    src_path = Path(input_dir) / dir_file_tuple[0] / dir_file_tuple[1] / dir_file_tuple[2]
 
     # destination path
     if dir_distinction is not None:
 
         speaker_name = speaker_name + f'_{dir_distinction}'
 
-    dst_path = os.path.join(output_dir,
-                            speaker_name,
-                            dir_file_tuple[0],                            
-                            dir_file_tuple[2])
+    dst_path = Path(output_dir) / speaker_name / dir_file_tuple[0] / dir_file_tuple[2]
 
-    dst_parents_path = PurePath(dst_path).parent
-
-    if not Path(dst_parents_path).is_dir():
-
-        Path(dst_parents_path).mkdir(parents=True)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
 
     shutil.copy(src_path, dst_path)
