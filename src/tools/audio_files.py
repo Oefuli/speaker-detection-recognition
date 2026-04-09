@@ -252,18 +252,22 @@ def diariza(
         # send pipeline to GPU (when available)
         pipeline.to(torch.device("cuda"))
 
-    print("Duration of audio file: "
-          f"{librosa.get_duration(path=input_file_path)} s.")
+    logger.info(
+        "Duration of audio file: "
+        f"{librosa.get_duration(path=input_file_path)} s."
+          )
 
     t0 = time.time()
-    print(f"\nStarted diarization at {datetime.now()}.")
-    print(f"\tCUDA switch: {cuda_switch}.")
+    logger.info(
+        f"Started diarization at {datetime.now()}."
+        )
+    logger.info(f"CUDA switch: {cuda_switch}.")
 
     diarization = pipeline(input_file_path)
 
     t1 = time.time()
-    print(f"\nEnded diarization at {datetime.now()}.")
-    print(f"\n\t--> Elapsed time: {t1 - t0} s.")
+    logger.info(f"Ended diarization at {datetime.now()}.")
+    logger.info(f"Elapsed time: {t1 - t0} s.")
 
     if dump_switch:
 
@@ -481,7 +485,7 @@ def get_audio_durations(
     of the audio files in seconds.
     """
 
-    print('Duration in seconds.')
+    logger.info('Duration in seconds.')
 
     audio_dir_dict = {}
 
@@ -532,8 +536,7 @@ def get_audio_infos(
 
     for attr in infos_lst:
 
-        audio_infos_dict[(file_name, attr)] =\
-        eval(f"audio_infos.{attr}")
+        audio_infos_dict[(file_name, attr)] = getattr(audio_infos, attr)
         
     audio_infos_dict[(file_name, 'size_bytes')] = path_obj.stat().st_size
 

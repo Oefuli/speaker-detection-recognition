@@ -2,10 +2,19 @@ from pathlib import Path
 
 from pyannote.audio import Pipeline
 from pyannote.database.util import load_rttm
+from pyannote.core import Annotation
+
+import logging
 
 from src.tools.utils import remap_dict_keys
 from src.tools.audio_files import split_audio, get_speaker_dist, diariza
 from src.tools.paths_files import write_json, copy_audio_slice
+from src.tools.logger_config import setup_logger
+
+# ----------------------------------------------- #
+
+setup_logger()
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------- #
 
@@ -21,7 +30,9 @@ PATH_PYANNOTE_MODEL = SRC_PATH / 'pyannote_clf' / 'pyannote_offline_config.yaml'
 
 # ----------------------------------------------- #
 
-def pyann_load_model(path_model: str = PATH_PYANNOTE_MODEL):
+def pyann_load_model(
+        path_model: str | Path = PATH_PYANNOTE_MODEL
+        ):
     """
     Loads a Pyannote model for diarization from
     src/pyannote_clf/pyannote_offline_config.yaml.
@@ -42,20 +53,21 @@ def pyann_load_model(path_model: str = PATH_PYANNOTE_MODEL):
 # ------------------------------------------------------------- #
 
 
-class diarize_voice_rec():
+class DiarizeVoiceRec():
     """
     Diarizes the audio recording input_file_name_to_diar, splits it,
     stores the splits, compares the splits to a reference audio file
     and is able to copy the nearest audio files in an extra directory.
     """
 
-    def __init__(self,
-                 input_dir_to_diar: Path | str = None,
-                 input_file_name_to_diar: str = None,
-                 dump_rttm_dir: Path | str = OUTPUT_DIR_PATH / 'pyannote_diarization_rttm',
-                 split_dir: Path | str = OUTPUT_DIR_PATH / 'audio_splits',
-                 output_sel_slices: Path | str = OUTPUT_DIR_PATH / 'audio_sel_person'
-                 ) -> None:
+    def __init__(
+            self,
+            input_dir_to_diar: Path | str,
+            input_file_name_to_diar: str,
+            dump_rttm_dir: Path | str = OUTPUT_DIR_PATH / 'pyannote_diarization_rttm',
+            split_dir: Path | str = OUTPUT_DIR_PATH / 'audio_splits',
+            output_sel_slices: Path | str = OUTPUT_DIR_PATH / 'audio_sel_person'
+            ) -> None:
         
         """
         input_dir_to_diar (Path | str): Path to the directory in which the files
@@ -76,12 +88,19 @@ class diarize_voice_rec():
         self.split_dir = split_dir        
         self.output_sel_slices = output_sel_slices
 
+        self.diarization: Annotation | dict | None = None
+        self.split_dict = {}
+        self.ref_file_name = None
+        self.dist_dict = {}
+
     # ------------------------------------------------------------------- #
 
-    def diarize(self,
-                cuda_switch: bool = False,
-                dump_switch: bool = False,
-                dump_output_file_name: str = None):
+    def diarize(
+            self,
+            cuda_switch: bool = False,
+            dump_switch: bool = False,
+            dump_output_file_name: str | None = None
+            ):
         """
         Uses pyannotes pipeline =
         Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", ...)
@@ -106,9 +125,11 @@ class diarize_voice_rec():
 
     # ------------------------------------------------------------------- #
     
-    def load_diarized(self,
-                      rttm_dir_path: Path | str = None,
-                      rttm_file_name:str = None):
+    def load_diarized(
+            self,
+            rttm_dir_path: Path | str | None = None,
+            rttm_file_name:str | None = None
+            ):
         """
         Loads the RTTM File of a diarized audio file.
         """
@@ -132,6 +153,14 @@ class diarize_voice_rec():
         saves individual sequences that are assigned to the speakers.
         """
 
+        if self.diarization is None:
+            error_msg = (
+                "Diarisation is set to None. First run diarize() or load_diarized(), "
+                "before calling split()."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         self.split_dict = split_audio(input_dir=self.input_dir_to_diar,
                                       input_file_name=self.input_file_name_to_diar,
                                       output_dir=self.split_dir,
@@ -139,8 +168,10 @@ class diarize_voice_rec():
 
     # ------------------------------------------------------------------- #
     
-    def split_dict_to_json(self,
-                           dir_path: Path | str = None):
+    def split_dict_to_json(
+            self,
+            dir_path: Path | str | None = None
+            ):
         """
         Saves the split_dict to a JSON file.
         The JSON file contains the file name and the start and end
@@ -155,17 +186,21 @@ class diarize_voice_rec():
             # Saves the JSON in the main directory of the splits.
             dir_path = OUTPUT_DIR_PATH
 
+        dir_path = Path(dir_path)
+
         file_path = (dir_path / Path(self.input_file_name_to_diar).stem).with_suffix('.json')
 
-        write_json(file_path,
-                   remap_dict_keys(self.split_dict))
+        write_json(
+            file_path,
+            remap_dict_keys(self.split_dict)
+            )
 
     # ------------------------------------------------------------------- #
 
     def ref_cdist(self,
-                  ref_dir_path: Path | str = None,
-                  ref_file_name: str = None,
-                  split_subdir: Path | str = None,
+                  ref_dir_path: Path | str,
+                  ref_file_name: str,
+                  split_subdir: Path | str | None = None,
                   metric: str = 'euclidean',
                   ext='wav',
                   duration_val=5,
@@ -202,10 +237,11 @@ class diarize_voice_rec():
     # ------------------------------------------------------------------- #
 
     def copy_sel_slices(self,
-                        input_dir: Path | str = None,
-                        output_dir: Path | str = None,
-                        dir_file_lst: list = None,
-                        speaker_name: str = None):
+                        dir_file_lst: list,
+                        speaker_name: str,
+                        input_dir: Path | str | None = None,
+                        output_dir: Path | str | None = None
+                        ):
         """
         Copies files from input_dir to output_dir using the directory structure in input_dir:
         input_dir/audio_dir/speaker_dir/filename.wav, e.g.

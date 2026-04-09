@@ -3,6 +3,7 @@ import shutil
 from tqdm import tqdm
 import json
 import logging
+from typing import Any
 
 from logger_config import setup_logger
 
@@ -15,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 def write_json(
-        file_path: str, 
-        data: str
+        file_path: str | Path, 
+        data: Any
                ):
 
     with open(file_path, 'w') as f:
