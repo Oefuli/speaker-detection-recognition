@@ -24,11 +24,9 @@ from pyannote.core import Annotation
 from scipy.spatial.distance import cdist
 
 from .paths_files import get_only_dir, get_f_ps_ns
-from logger_config import setup_logger
 
 # ------------------------------------------------- #
 
-setup_logger()
 logger = logging.getLogger(__name__)
                            
 # ------------------------------------------------- #
@@ -109,9 +107,12 @@ def cut_out_audio(
 
     
     try:
-        run(cmd, capture_output=True, check=True).stdout
+        run(cmd, capture_output=True, check=True)
     except CalledProcessError as e:
-        raise RuntimeError(f"FFMPEG error {str(e)}")
+        # Decode stderr to get the actual ffmpeg error message
+        error_details = e.stderr.decode('utf-8') if e.stderr else "No additional error details."
+        logger.error(f"FFMPEG failed with output: {error_details}")
+        raise RuntimeError(f"FFMPEG error: {str(e)} - Details: {error_details}")
 
 # -------------------------------------------------- #
 
@@ -350,36 +351,33 @@ def norm_array(vec):
 def compare_audios_dist(
         speaker1_path: Path | str,
         speaker2_path: Path | str,
+        inference: Inference,
         metric: str,                        
-        cuda_switch: bool = False,
         norm: bool = False
         ):
     """
-    INPUT
-        speaker1_path (Path | str): Path to the audo file
-            for the first speaker.
-        speaker2_path (Path | str): Path to the audo file
-            for the second speaker.
+    Computes the distance between two audio files based on speaker embeddings.
+    
+    Args:
+        speaker1_path (Path | str): Path to the audio file of the first speaker.
+        speaker2_path (Path | str): Path to the audio file of the second speaker.
+        inference (pyannote.audio.Inference): Pre-loaded Pyannote inference object.
+        metric (str): Distance metric to be used (e.g., 'euclidean' or 'cosine').
+        norm (bool): If True, normalizes the embeddings before computing the distance.
+        
+    Returns:
+        numpy.ndarray: The computed distance between the two embeddings.
     """    
     
-    model = Model.from_pretrained(PATH_PYANNOTE_EMBEDDING)
-
-    inference = Inference(model, window="whole")
-
-    if cuda_switch:
-        inference.to(torch.device("cuda"))
-
+    # Extract embeddings using the pre-loaded inference object
     emb1_raw = np.asarray(inference(speaker1_path))
     emb2_raw = np.asarray(inference(speaker2_path))
 
     if norm:
-
         embedding1 = norm_array(emb1_raw.reshape(1, -1))
         embedding2 = norm_array(emb2_raw.reshape(1, -1))
-
     else:
-        # `embeddingX` is (1 x D) numpy array extracted
-        # from the file as a whole.
+        # `embeddingX` is a (1 x D) numpy array extracted from the whole file
         embedding1 = emb1_raw.reshape(1, -1)
         embedding2 = emb2_raw.reshape(1, -1)    
 
@@ -387,7 +385,7 @@ def compare_audios_dist(
         embedding1,
         embedding2,
         metric=metric # type: ignore
-        ) 
+        )
 
 # -------------------------------------------------------------------------- #
 
@@ -401,9 +399,8 @@ def get_speaker_dist(
         cuda_switch: bool=False
         ):
     """
-    Returns the distances between the given
-    audio files in split_dir_path and the reference in
-    reference_dir.
+    Returns the distances between the given audio files in split_dir_path 
+    and the reference file in reference_dir.
 
     Args:
         reference_dir_path (Path | str): Directory for the reference file.
@@ -412,32 +409,34 @@ def get_speaker_dist(
             file are located. The splits must be sorted by speaker
             in subdirectories.
         metric (str): Metric to compute the distance.
-        ext (str): File extension of the files in the subdirectories
-            of the split directory.
-        duration_val (float): Minimum duration of the audio file.
-        cuda_switch (bool): Use CUDA or not.
+        ext (str): File extension of the files in the subdirectories.
+        duration_val (float): Minimum duration of the audio file in seconds.
+        cuda_switch (bool): Use CUDA if available.
 
     Returns:
-        dict: 
-            Keys: split_dir - Name of the split directory (see above).
-                  subdir_name - Names of the subdirectories in split_dir.
-                  file_name - Names of the files in subdir_name.
-                  ref_file_name - Name of the reference file.
-                  metric - Name of the metric used.
-            Values: Computed distances.
+        dict: Computed distances with tuples of file details as keys.
     """
 
     dist_dict = {}
-
     path_reference = str(Path(reference_dir_path) / reference_file_name)
-
     
     logger.info("Start computing distances.") 
-    logger.info(f"Use CUDA: {cuda_switch}.")    
+    logger.info(f"Use CUDA requested: {cuda_switch}.")    
     logger.info(f"Reference path: {path_reference}.")    
-    logger.info(f'Duration value: {duration_val} s.')
+    logger.info(f"Duration threshold: {duration_val} s.")
 
-    # all directories in the split directory
+    # Load the embedding model ONCE before the loops start
+    logger.info("Loading Pyannote embedding model...")
+    model = Model.from_pretrained(PATH_PYANNOTE_EMBEDDING)
+    inference = Inference(model, window="whole")
+
+    if cuda_switch:
+        # Safely assign to CUDA only if it is actually available
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        inference.to(device)
+        logger.info(f"Inference model moved to device: {device}")
+
+    # Get all directories in the split directory
     subdirs_split_dir_path = get_f_ps_ns(split_dir_path, dir_switch=True)
 
     pbar = tqdm(list(subdirs_split_dir_path.keys()))
@@ -445,9 +444,7 @@ def get_speaker_dist(
     for subdir_name in pbar:
 
         subdir_path = Path(split_dir_path) / subdir_name
-
-        file_paths_names = get_f_ps_ns(
-                           subdir_path, file_ext=ext)
+        file_paths_names = get_f_ps_ns(subdir_path, file_ext=ext)
 
         file_paths = list(file_paths_names.values())
         file_names = list(file_paths_names.keys())
@@ -458,19 +455,20 @@ def get_speaker_dist(
 
             if duration >= duration_val:
 
+                # Pass the pre-loaded inference object instead of the cuda_switch
                 dist = compare_audios_dist(speaker1_path=path_reference,
                                            speaker2_path=file_path,
-                                           metric=metric,                                        
-                                           cuda_switch=cuda_switch)
-                if dist.shape != (1,1):
-
-                    logger.warning(f'Shape of distance is {dist.shape}!')
+                                           inference=inference, 
+                                           metric=metric)
+                                           
+                if dist.shape != (1, 1):
+                    logger.warning(f"Shape of distance is {dist.shape}!")
 
                 dist_dict[(PurePath(split_dir_path).name,
                            subdir_name,
                            file_name,
                            reference_file_name
-                           )] = {f'metric_{metric}': dist[0,0]}
+                           )] = {f'metric_{metric}': dist[0, 0]}
 
     return dist_dict
 

@@ -5,11 +5,8 @@ import json
 import logging
 from typing import Any
 
-from logger_config import setup_logger
-
 # ------------------------------------------------- #
 
-setup_logger()
 logger = logging.getLogger(__name__)
                            
 # ------------------------------------------------- #
@@ -26,41 +23,31 @@ def write_json(
 # ------------------------------------------------- #
 
 def read_json(
-        file_path: str
-        ) -> dict | bool:
+        file_path: str | Path
+        ) -> dict:
 
-    file_name = str(PurePath(file_path).stem)
-    dir_path = str(PurePath(file_path).parent)
-
-    data = False
+    file_name = PurePath(file_path).stem
+    dir_path = PurePath(file_path).parent
     
     try:
         with open(file_path, 'r') as file:
             data = json.load(file) 
-
-        logger.info("JSON file was successfully read in.")
-
+        logger.info(
+            f"JSON file {file_name} in {dir_path} was successfully read in."
+            )
         return data      
     
     except FileNotFoundError:
-
-        logger.error(f"File {file_name} in {dir_path} doesn't exist.")
-        
-        data = False
+        logger.exception(f"File {file_name} in {dir_path} doesn't exist.")
+        raise        
 
     except json.JSONDecodeError:
-
-        logger.error(f"There was an error decoding {file_name} in {dir_path}.")
-
-        data = False
+        logger.exception(f"There was an error decoding {file_name} in {dir_path}.")
+        raise
 
     except Exception as e:
-
         logger.exception(f"An unexpected error occurred: {e}")
-
-        data = False    
-        
-    return data
+        raise
 
 # ----------------------------------------------------------------- #
 
@@ -69,30 +56,26 @@ def get_f_ps_ns(
         file_ext: str = '*',
         dir_switch: bool = False,
         subfolder_switch: bool = False,
-        tqdm_switch: bool = True,
-        verbose=-1
+        show_progress: bool = True,
+        verbose: int = -1
         ) -> dict:
     """
-    Returns all files and file paths or files and
-    files paths with a specific extension
-    from the given directory.
+    Returns all files and file paths or directories
+    with a specific extension from the given directory.
 
-    Args
+    Args:
+        dir_path (Path | str): Path to a directory.
+        file_ext (str): File extension format (e.g. 'json', 'wav'). Default '*' returns all.
+        dir_switch (bool): If True, returns subdirectory names and paths instead of files.
+        subfolder_switch (bool): If True, searches recursively in all subdirectories.
+        show_progress (bool): If True, displays a tqdm progress bar.
+        verbose (int): Verbosity level for logging.
 
-        dir_path (str): Path to a directory
-        file_ext: Default returns all files and directories.
-             File extension format: E.g. 'json', 'wav' etc.
-        dir_switch (bool): If True, file_names contains all
-            subdirectory names in dir_path and file_paths the paths of
-            the subdirectories. The switch is for control purposes only.
-
-    Returns
-
-        dict: Keys: Dir/ File names.
-              Values: Dir/ File paths.
+    Returns:
+        dict: Keys are file/dir names (or tuples if subfolder_switch=True), 
+              Values are absolute file/dir paths as strings.
     """
 
-    tqdm_switch = not tqdm_switch
     base_dir = Path(dir_path)
 
     # guarantees e.g. file_ext == '*.wav'
@@ -112,13 +95,12 @@ def get_f_ps_ns(
     if subfolder_switch:
         path_iterator = base_dir.rglob(file_ext)
         desc_text = f'Get all {file_ext} files in all subdirectories'
-        
     else:
         path_iterator = base_dir.glob(file_ext)
         desc_text = 'Arrange dictionary'
 
-
-    for file_path in tqdm(list(path_iterator), disable=tqdm_switch, desc=desc_text):
+    # Die verwirrende Invertierung ist weg. Wir nutzen 'not show_progress' direkt im Aufruf:
+    for file_path in tqdm(list(path_iterator), disable=not show_progress, desc=desc_text):
 
         if dir_switch:
             if file_path.is_dir():
@@ -135,7 +117,7 @@ def get_f_ps_ns(
                 logger.warning(f'{file_path} is not a file.')
 
     if verbose > -1:
-        logger.info(f'Found {len(files_in_dir_dict)} files.')
+        logger.info(f'Found {len(files_in_dir_dict)} elements.')
 
     return files_in_dir_dict
 
